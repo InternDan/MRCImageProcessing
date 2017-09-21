@@ -22,7 +22,7 @@ function varargout = contouringGUI(varargin)
 
 % Edit the above text to modify the response to help contouringGUI
 
-% Last Modified by GUIDE v2.5 03-Aug-2017 10:09:10
+% Last Modified by GUIDE v2.5 29-Aug-2017 14:23:31
 
 % Begin initialization code - DO NOT EDIT
 gui_Singleton = 1;
@@ -76,8 +76,8 @@ handles.startStop = 0;
 set(handles.textBusy,'String','Not Busy');
 
 %initialize mask clearing slices
-handles.startClear = 1;
-handles.endClear = 999;
+% handles.startClear = 1;
+% handles.endClear = 999;
 
 %initialize morph start and stop
 handles.startMorph = 1;
@@ -189,13 +189,13 @@ try
     
     handles.pathstr = uigetdir(pwd,'Please select the folder containing your DICOM files');
     
-    handles.files = dir([handles.pathstr '\*.dcm*']);
+    handles.files = dir(fullfile(handles.pathstr, '*.dcm*'));
 %     mrFlag = 0;
     if isempty(handles.files)
-        handles.files = dir([handles.pathstr '\IM*']);
+        handles.files = dir(fullfile(handles.pathstr, 'IM*'));
 %         mrFlag = 1;
     end
-    handles.info = dicominfo([handles.pathstr '\' handles.files(1).name]);
+    handles.info = dicominfo(fullfile(handles.pathstr,handles.files(1).name));
     
     if ~isfield(handles.info,'Manufacturer')
         handles.info.Manufacturer = 'ZEISS';
@@ -218,12 +218,12 @@ try
         set(handles.textPercentLoaded,'String',num2str(i/length(handles.files)));
         drawnow();
 %         if mrFlag == 1
-            infotmp(i) = dicominfo([handles.pathstr '\' handles.files(i).name]);
+            infotmp(i) = dicominfo(fullfile(handles.pathstr,handles.files(i).name));
             locTmp1(i) = infotmp(i).ImagePositionPatient(1);
             locTmp2(i) = infotmp(i).ImagePositionPatient(2);
             locTmp3(i) = infotmp(i).ImagePositionPatient(3);
 %         end
-        handles.img(:,:,i) = dicomread([handles.pathstr '\' handles.files(i).name]);
+        handles.img(:,:,i) = dicomread(fullfile(handles.pathstr,handles.files(i).name));
     end
     dif1 = diff(locTmp1);
     dif2 = diff(locTmp2);
@@ -496,7 +496,9 @@ function pushbuttonExecuteAnalysis_Callback(hObject, eventdata, handles)
 % eventdata  reserved - to be defined in a future version of MATLAB
 % handles    structure with handles and user data (see GUIDATA)
 if strcmpi(handles.analysis,'Cortical') == 1
-    handles = corticalAnalysis(handles,hObject);
+    timerFcn = {@corticalAnalysis,handles,hObject};
+    start(timer('StartDelay',0.2,'TimerFcn',timerFcn));
+%     corticalAnalysis(handles,hObject);
     
 elseif strcmpi(handles.analysis,'Cancellous') == 1
     handles = cancellousAnalysis(handles,hObject);
@@ -512,6 +514,18 @@ elseif strcmpi(handles.analysis,'MarrowFat') == 1
     
 elseif strcmpi(handles.analysis,'TangIVDPMA') == 1
     handles = tangIVDPMA(handles,hObject);
+    
+elseif strcmpi(handles.analysis,'MakeDatasetIsotropic') == 1
+    handles = makeDatasetIsotropic(handles,hObject);
+    
+elseif strcmpi(handles.analysis,'GenerateHistogram') == 1
+    generateHistogram(handles,hObject);
+    
+elseif strcmpi(handles.analysis,'SaveCurrentImage') == 1
+    saveCurrentImage(handles,hObject);
+    
+elseif strcmpi(handles.analysis,'WriteToTiff') == 1
+    writeToTiff(handles,hObject);
     
 elseif strcmpi(handles.analysis,'TendonFootprint') == 1
     handles = tendonFootprint(handles,hObject);
@@ -557,6 +571,10 @@ elseif strcmpi(handles.analysis,'GuilakKneeSurface') == 1
     
 elseif strcmpi(handles.analysis,'SkeletonizationAnalysis') == 1
     handles = skeletonizationAnalysis(handles,hObject);
+elseif strcmpi(handles.analysis,'DistanceMap') == 1
+    handles = distanceMap(handles,hObject);
+elseif strcmpi(handles.analysis,'WriteToDICOM') == 1
+    writeCurrentImageStackToDICOM(handles,hObject);
 
 end
 
@@ -735,7 +753,7 @@ function pushbuttonClearMaskRange_Callback(hObject, eventdata, handles)
 % hObject    handle to pushbuttonClearMaskRange (see GCBO)
 % eventdata  reserved - to be defined in a future version of MATLAB
 % handles    structure with handles and user data (see GUIDATA)
-handles.bwContour(:,:,handles.startClear:handles.endClear) = false(size(handles.bwContour(:,:,handles.startClear:handles.endClear)));
+handles.bwContour(:,:,handles.startMorph:handles.endMorph) = false(size(handles.bwContour(:,:,handles.startMorph:handles.endMorph)));
 guidata(hObject, handles);
 updateImage(hObject, eventdata, handles);
 
@@ -759,7 +777,7 @@ function editStartClear_Callback(hObject, eventdata, handles)
 
 % Hints: get(hObject,'String') returns contents of editStartClear as text
 %        str2double(get(hObject,'String')) returns contents of editStartClear as a double
-handles.startClear = str2num(get(handles.editStartClear,'String'));
+handles.startClear = str2num(get(handles.editStartMorph,'String'));
 guidata(hObject, handles);
 
 % --- Executes during object creation, after setting all properties.
@@ -783,7 +801,7 @@ function editEndClear_Callback(hObject, eventdata, handles)
 
 % Hints: get(hObject,'String') returns contents of editEndClear as text
 %        str2double(get(hObject,'String')) returns contents of editEndClear as a double
-handles.endClear = str2num(get(handles.editEndClear,'String'));
+handles.endClear = str2num(get(handles.editEndMorph,'String'));
 guidata(hObject, handles);
 
 
@@ -949,9 +967,11 @@ try
     guidata(hObject, handles);
     drawnow();
     if strcmpi(handles.stlWriteMethod,'ascii') == 1
-        stlwrite([handles.pathstr '\scaled-' num2str(handles.imgScale) '-' handles.DICOMPrefix '-stl-ascii.stl'],handles.shp.boundaryFacets,handles.shp.Points,'mode','ascii');
+        fName = ['scaled-' num2str(handles.imgScale) '-' handles.DICOMPrefix '-stl-ascii.stl'];
+        stlwrite(fullfile(handles.pathstr,fName),handles.shp.boundaryFacets,handles.shp.Points,'mode','ascii');
     else
-        stlwrite([handles.pathstr '\scaled-' num2str(handles.imgScale) '-' handles.DICOMPrefix  '-stl.stl'],handles.shp.boundaryFacets,handles.shp.Points,'FaceColor',handles.STLColor);
+        fName = ['scaled-' num2str(handles.imgScale) '-' handles.DICOMPrefix '-stl.stl'];
+        stlwrite(fullfile(handles.pathstr,fName),handles.shp.boundaryFacets,handles.shp.Points,'FaceColor',handles.STLColor);
     end
     set(handles.textBusy,'String','Not Busy');
     guidata(hObject, handles);
@@ -1192,113 +1212,6 @@ guidata(hObject, handles);
 updateImage(hObject, eventdata, handles);
 
 
-% --- Executes on button press in pushbuttonWriteIMGToDICOM.
-function pushbuttonWriteIMGToDICOM_Callback(hObject, eventdata, handles)
-% hObject    handle to pushbuttonWriteIMGToDICOM (see GCBO)
-% eventdata  reserved - to be defined in a future version of MATLAB
-% handles    structure with handles and user data (see GUIDATA)
-%for all
-try
-    set(handles.textBusy,'String','Busy');
-    guidata(hObject, handles);
-    drawnow();
-    [a b c] = size(handles.img);
-    
-    zers = '00000';
-    handles.info.Rows = a;
-    handles.info.Columns = b;
-    handles.info.InstitutionName = 'Washington University in St. Louis';
-    handles.info.SliceThickness = handles.info.SliceThickness / handles.imgScale;
-    handles.info.Height = a;
-    handles.info.Width = b;
-    handles.info.PixelSpacing = [handles.info.SliceThickness;handles.info.SliceThickness];
-    handles.info.PixelSpacing = handles.info.PixelSpacing .* handles.imgScale;
-    handles.info.StudyDescription = handles.DICOMPrefix;
-    
-    
-    %for ZEISS scans
-    if ~isempty(strfind(handles.info.Manufacturer,'Zeiss'))
-        sysLine = ['md "' handles.pathstr '\' handles.DICOMPrefix '"'];
-        system(sysLine);
-        tmp = dicominfo([pwd,'\ZeissDICOMTemplate.dcm']);%read info from a known working Zeiss DICOM
-        tmp2 = tmp;
-        for i = 1:c
-            tmp2.FileName = [handles.DICOMPrefix zers(1:end - length(num2str(i))) num2str(i) '.dcm'];
-            tmp2.Rows = handles.info.Rows;
-            tmp2.Columns = handles.info.Columns;
-            tmp2.InstitutionName = handles.info.InstitutionName;
-            tmp2.SliceThickness = handles.info.SliceThickness;
-            tmp2.Height = handles.info.Height;
-            tmp2.Width = handles.info.Width;
-            tmp2.PixelSpacing = handles.info.PixelSpacing;
-            tmp2.StudyDescription = handles.info.StudyDescription;
-            tmp2.KVP = handles.info.KVP;
-            zers2 = '000000';
-            slice = num2str(i);
-            len = length(slice);
-            tmp2.MediaStorageSOPInstanceUID = ['1.2.826.0.1.3680043.8.435.3015486693.35541.' zers(1:end-len) num2str(i)];
-            tmp2.SOPInstanceUID = tmp2.MediaStorageSOPInstanceUID;
-            tmp2.PatientName.FamilyName = handles.DICOMPrefix;
-            tmp2.ImagePositionPatient(3) = tmp2.ImagePositionPatient(3) + tmp2.SliceThickness;
-            dicomwrite(handles.img(:,:,i),[handles.pathstr '\' handles.DICOMPrefix '\' handles.DICOMPrefix zers(1:end-length(num2str(i))) num2str(i)  '.dcm'],tmp2);
-        end
-    elseif ~isempty(strfind(handles.info.Manufacturer,'SCANCO'))
-        sysLine = ['md "' handles.pathstr '\' handles.DICOMPrefix '"'];
-        system(sysLine);
-        %sort out info struct for writing; dicomwrite won't write private fields
-        tmp = handles.info;
-        if isfield(tmp,'Private_0029_1000')%identifies as Scanco original DICOM file
-            handles.info.ReferringPhysicianName.FamilyName = num2str(tmp.Private_0029_1004);%will be slope for density conversion
-            handles.info.ReferringPhysicianName.GivenName = num2str(tmp.Private_0029_1005);%intercept
-            handles.info.ReferringPhysicianName.MiddleName = num2str(tmp.Private_0029_1000);%scaling
-            handles.info.ReferringPhysicianName.NamePrefix = num2str(tmp.Private_0029_1006);%u of water
-        end
-        for i = 1:c
-            if i == 1
-                info = handles.info;
-                info.FileName = [handles.pathstr '\' handles.DICOMPrefix zers(1:end-length(num2str(i))) num2str(i) '.dcm'];
-            else
-                info.SliceLocation = info.SliceLocation + info.SliceThickness;
-                info.ImagePositionPatient = info.ImagePositionPatient + info.SliceThickness;
-                info.FileName = [handles.pathstr '\' handles.DICOMPrefix zers(1:end-length(num2str(i))) num2str(i)  '.dcm'];
-                %         info.MediaStorageSOPInstanceUID = num2str(str2num(info.MediaStorageSOPInstanceUID) + 1);
-                %         info.SOPInstanceUID = num2str(str2num(info.SOPInstanceUID) + 1);
-                
-            end
-            dicomwrite(handles.img(:,:,i),[handles.pathstr '\' handles.DICOMPrefix '\' handles.DICOMPrefix zers(1:end-length(num2str(i))) num2str(i)  '.dcm'],info);
-        end
-    else
-        sysLine = ['md "' handles.pathstr '\' handles.DICOMPrefix '"'];
-        system(sysLine);
-        %sort out info struct for writing; dicomwrite won't write private fields
-        tmp = handles.info;
-        for i = 1:c
-            if i == 1
-                info = handles.info;
-                info.SliceLocation = 1;
-                info.FileName = [handles.pathstr '\' handles.DICOMPrefix zers(1:end-length(num2str(i))) num2str(i) '.dcm'];
-            else
-                info.SliceLocation = info.SliceLocation + info.SliceThickness;
-                info.ImagePositionPatient = info.ImagePositionPatient + info.SliceThickness;
-                info.FileName = [handles.pathstr '\' handles.DICOMPrefix zers(1:end-length(num2str(i))) num2str(i)  '.dcm'];
-                %         info.MediaStorageSOPInstanceUID = num2str(str2num(info.MediaStorageSOPInstanceUID) + 1);
-                %         info.SOPInstanceUID = num2str(str2num(info.SOPInstanceUID) + 1);
-                
-            end
-            dicomwrite(handles.img(:,:,i),[handles.pathstr '\' handles.DICOMPrefix '\' handles.DICOMPrefix zers(1:end-length(num2str(i))) num2str(i)  '.dcm'],info);
-        end
-        
-    end
-    set(handles.textBusy,'String','Not Busy');
-    guidata(hObject, handles);
-    drawnow();
-catch
-    set(handles.textBusy,'String','Failed');
-    guidata(hObject, handles);
-    drawnow();
-end
-
-
 
 function editDICOMPrefix_Callback(hObject, eventdata, handles)
 % hObject    handle to editDICOMPrefix (see GCBO)
@@ -1323,16 +1236,21 @@ if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgr
 end
 
 
-% --- Executes on button press in pushbuttonSetMaskToLargest.
-function pushbuttonSetMaskToLargest_Callback(hObject, eventdata, handles)
-% hObject    handle to pushbuttonSetMaskToLargest (see GCBO)
+% --- Executes on button press in pushbuttonSetMaskToComponent.
+function pushbuttonSetMaskToComponent_Callback(hObject, eventdata, handles)
+% hObject    handle to pushbuttonSetMaskToComponent (see GCBO)
 % eventdata  reserved - to be defined in a future version of MATLAB
 % handles    structure with handles and user data (see GUIDATA)
 try
     set(handles.textBusy,'String','Busy');
     guidata(hObject, handles);
     drawnow();
-    handles.bwContour = bwBiggest(handles.bwContour);
+    
+    str = get(handles.popupmenuMaskComponents,'String');
+    val = get(handles.popupmenuMaskComponents,'Value');
+    str = str{val};
+    
+    handles.bwContour = bwIndex(handles.bwContour, str2num(str));
     guidata(hObject, handles);
     updateImage(hObject, eventdata, handles);
     set(handles.textBusy,'String','Not Busy');
@@ -2121,7 +2039,18 @@ switch str{val}
         handles.analysis = 'GuilakKneeSurface';
     case 'SkeletonizationAnalysis'
         handles.analysis = 'SkeletonizationAnalysis';
-
+    case 'DistanceMap'
+        handles.analysis = 'DistanceMap';
+    case 'WriteToTiff'
+        handles.analysis = 'WriteToTiff';
+    case 'WriteToDICOM'
+        handles.analysis = 'WriteToDICOM';
+    case 'SaveCurrentImage'
+        handles.analysis = 'SaveCurrentImage';
+    case 'GenerateHistogram'
+        handles.analysis = 'GenerateHistogram';
+    case 'MakeDatasetIsotropic'
+        handles.analysis = 'MakeDatasetIsotropic';
 end
 guidata(hObject, handles);
 
@@ -2282,7 +2211,7 @@ try
     
     set(handles.editScaleImageSize,'String',num2str(handles.imgScale));
     
-    [fName pName] = uigetfile([pwd '\*.txm'],'Please select your TXM file');
+    [fName pName] = uigetfile(fullfile(pwd,'*.txm'),'Please select your TXM file');
     handles.pathstr = [pName fName];
     
     set(handles.textCurrentDirectory,'String',[pName fName]);
@@ -3047,17 +2976,6 @@ guidata(hObject, handles);
 updateImage(hObject, eventdata, handles);
 
 
-% --- Executes on button press in pushbuttonGenerateHistogram.
-function pushbuttonGenerateHistogram_Callback(hObject, eventdata, handles)
-% hObject    handle to pushbuttonGenerateHistogram (see GCBO)
-% eventdata  reserved - to be defined in a future version of MATLAB
-% handles    structure with handles and user data (see GUIDATA)
-[a b c] = size(handles.img);
-img = reshape(handles.img,[1,a*b*c]);
-figure;
-histogram(img(find(img > 2)),320);
-
-
 % --- Executes on button press in pushbuttonCopyMask.
 function pushbuttonCopyMask_Callback(hObject, eventdata, handles)
 % hObject    handle to pushbuttonCopyMask (see GCBO)
@@ -3176,17 +3094,6 @@ end
 guidata(hObject, handles);
 
 
-% --- Executes on button press in pushbuttonSaveCurrentImage.
-function pushbuttonSaveCurrentImage_Callback(hObject, eventdata, handles)
-% hObject    handle to pushbuttonSaveCurrentImage (see GCBO)
-% eventdata  reserved - to be defined in a future version of MATLAB
-% handles    structure with handles and user data (see GUIDATA)
-
-tmp = getimage(handles.axesIMG);
-outFile = [handles.pathstr,'\',get(handles.editDICOMPrefix,'String'),'.tif'];
-imwrite(tmp,outFile);
-
-
 % --- Executes on button press in pushbuttonSaveWorkspace.
 function pushbuttonSaveWorkspace_Callback(hObject, eventdata, handles)
 % hObject    handle to pushbuttonSaveWorkspace (see GCBO)
@@ -3196,7 +3103,7 @@ try
     set(handles.textBusy,'String','Busy');
     guidata(hObject, handles);
     drawnow();
-    save([handles.pathstr '\Workspace.mat'],'handles','-v7.3');
+    save(fullfile(handles.pathstr,'Workspace.mat'),'handles','-v7.3');
     set(handles.textBusy,'String','Not');
     guidata(hObject, handles);
     drawnow();
@@ -3446,203 +3353,11 @@ catch
 end
 
 
-% --- Executes on button press in pushbuttonGenerateDICOMFiles.
-function pushbuttonGenerateDICOMFiles_Callback(hObject, eventdata, handles)
-% hObject    handle to pushbuttonGenerateDICOMFiles (see GCBO)
-% eventdata  reserved - to be defined in a future version of MATLAB
-% handles    structure with handles and user data (see GUIDATA)
-
-% function ctBatchDICOMFromISQ()
-try
-    set(handles.textBusy,'String','Busy');
-    guidata(hObject, handles);
-    drawnow();
-    
-    [comfile compath ~] = uigetfile(pwd,'Please select your DICOM batch export template');
-    template = importdata(fullfile(compath,comfile),'t',5);
-    
-    answer1 = inputdlg('Please enter your sample number, three digits for Viva, four digits for Micro');
-    answer2 = inputdlg('Please enter the first measurement number you would like to reconstruct (00000 for all)');
-    answer3 = inputdlg('Please enter the last measurement number you would like to reconstruct (99999 for all)');
-    
-    %generate com file to be used to generate headers files
-    %to run the com file, you must first execute SET FILE/ATTRIBUTE=RFM:STM and
-    %type in the full path to the com file when prompted.
-    if length(answer1{1}) == 4
-        comFile = fopen([pwd '\microCTComFile.com'],'wt');
-        fprintf(comFile,'%s','$ SET FILE/ATTRIBUTEs=RFM=STM');
-        fprintf(comFile,'%s\n','');
-        fprintf(comFile,'%s\n','$! Original code created by Dan Leib');
-        f = ftp('10.21.24.204','microct','mousebone4');
-        ascii(f);
-        cd(f,'dk0');
-        cd(f,'data');
-        dirs = dir(f);%samples
-        for i = 1:length(dirs)
-            if ~isempty(str2num(dirs(i).name(1:end-6)))
-                if dirs(i).isdir == 1 && str2num(dirs(i).name(1:end-6)) == str2num(answer1{1})%check if is a directory
-                    cd(f,dirs(i).name(1:(end-2)));
-                    dirs2 = dir(f);%measurements
-                    for j = 1:length(dirs2)
-                        if dirs2(j).isdir == 1 && str2num(dirs2(j).name(1:end-6)) >= str2num(answer2{1}) && str2num(dirs2(j).name(1:end-6)) <= str2num(answer3{1})
-                            cd(f,dirs2(j).name(1:end-2));
-                            isqs = dir(f,'*.isq*');
-                            for k = 1:length(isqs)
-                                line1 = strrep(template{1},'SAMPLE',dirs(i).name(1:end-6));
-                                line1 = strrep(line1,'MEASUREMENT',dirs2(j).name(1:end-6));
-                                line2 = template{2};
-                                line3 = strrep(template{3},'CNUMBER',isqs(k).name(1:end-6));
-                                line4 = strrep(template{4},'MEASUREMENT',dirs2(j).name(1:end-6));
-                                line5 = template{5};
-                                fprintf(comFile,'%s\n',line1);
-                                fprintf(comFile,'%s\n',line2);
-                                fprintf(comFile,'%s\n',line3);
-                                fprintf(comFile,'%s\n',line4);
-                                fprintf(comFile,'%s\n',line5);
-                            end
-                            cd(f,'..');%back out of measurement
-                        end
-                    end
-                    cd(f,'..');%back out of sample
-                end
-                
-            end
-        end
-        fprintf(comFile,'%s\n','$ EXIT');
-        fclose(comFile);
-        cd(f,'idisk1:[microct.scratch.commandtemp]');
-        mput(f,[pwd '\microCTComFile.com']);
-    elseif length(answer1{1}) == 3
-        comFile = fopen([pwd '\microCTComFile.com'],'wt');
-        fprintf(comFile,'%s','$ SET FILE/ATTRIBUTEs=RFM=STM');
-        fprintf(comFile,'%s\n','');
-        fprintf(comFile,'%s\n','$! Original code created by Dan Leib');
-        f = ftp('10.21.24.203','microct','mousebone4');
-        ascii(f);
-        cd(f,'dk0');
-        cd(f,'data');
-        dirs = dir(f);%samples
-        for i = 1:length(dirs)
-            if isempty(strfind(dirs(i).name,'STORAGE'))
-                if dirs(i).isdir == 1 && str2num(dirs(i).name(1:end-6)) == str2num(answer1{1})%check if is a directory
-                    cd(f,dirs(i).name(1:(end-2)));
-                    dirs2 = dir(f);%measurements
-                    for j = 1:length(dirs2)
-                        if dirs2(j).isdir == 1 && str2num(dirs2(j).name(1:end-6)) >= str2num(answer2{1}) && str2num(dirs2(j).name(1:end-6)) <= str2num(answer3{1})
-                            cd(f,dirs2(j).name(1:end-2));
-                            isqs = dir(f,'*.isq*');
-                            for k = 1:length(isqs)
-                                line1 = strrep(template{1},'SAMPLE',dirs(i).name(1:end-6));
-                                line1 = strrep(line1,'MEASUREMENT',dirs2(j).name(1:end-6));
-                                line2 = template{2};
-                                line3 = strrep(template{3},'CNUMBER',isqs(k).name(1:end-6));
-                                line4 = strrep(template{4},'MEASUREMENT',dirs2(j).name(1:end-6));
-                                line5 = template{5};
-                                fprintf(comFile,'%s\n',line1);
-                                fprintf(comFile,'%s\n',line2);
-                                fprintf(comFile,'%s\n',line3);
-                                fprintf(comFile,'%s\n',line4);
-                                fprintf(comFile,'%s\n',line5);
-                            end
-                            cd(f,'..');%back out of measurement
-                        end
-                    end
-                    cd(f,'..');%back out of sample
-                end
-            end
-        end
-        fprintf(comFile,'%s\n','$ EXIT');
-        fclose(comFile);
-        cd(f,'disk1:[microct.scratch.commandfiles]');
-        mput(f,[pwd '\microCTComFile.com']);
-    else
-        error('Try that sample number again!');
-    end
-    
-    if length(answer1{1}) == 4
-        sysLine = '"c:\program files (x86)\putty\plink.exe" -ssh microct@10.21.24.204 -pw mousebone4 @disk1:[microct.scratch.commandtemp]microctcomfile.com';
-        system(sysLine);
-    else
-        sysLine = '"c:\program files (x86)\putty\plink.exe" -ssh microct@10.21.24.203 -pw mousebone4 @disk1:[microct.scratch.commandfiles]microctcomfile.com';
-        system(sysLine);
-    end
-    set(handles.textBusy,'String','Not Busy');
-    guidata(hObject, handles);
-    drawnow();
-catch
-    set(handles.textBusy,'String','Failed');
-    guidata(hObject, handles);
-    drawnow();
-end
-
-
-% --- Executes on button press in pushbuttonCollectDICOMFiles.
-function pushbuttonCollectDICOMFiles_Callback(hObject, eventdata, handles)
-% hObject    handle to pushbuttonCollectDICOMFiles (see GCBO)
-% eventdata  reserved - to be defined in a future version of MATLAB
-% handles    structure with handles and user data (see GUIDATA)
-try
-    set(handles.textBusy,'String','Busy');
-    guidata(hObject, handles);
-    drawnow();
-    answer1 = inputdlg('Please enter your sample number, 3 for Viva, 4 for Micro');
-    answer2 = {'00000'};%inputdlg('Please enter the first measurement number you would like to retrieve the DICOM files for');
-    answer3 = uigetdir(pwd,'Please choose a folder in which to dump all the DICOM files');
-    if length(answer1{1}) == 4
-        f = ftp('10.21.24.204','microct','mousebone4');
-    elseif length(answer1{1}) == 3
-        f = ftp('10.21.24.203','microct','mousebone4');
-    end
-    binary(f);
-    
-    cd(f,'dk0');
-    cd(f,'data');
-    cd(f,['0000' answer1{1}]);
-    directories = dir(f);
-    for i = 1:length(directories)
-        if directories(i).isdir == 1 && str2num(directories(i).name(1:8)) >= str2num(answer2{1})
-            cd(f,directories(i).name(1:8));
-            for j = 1:2
-                clear files;
-                files = dir(f,'*.dcm*');
-                if ~isempty(files)
-                    getTheFiles(answer3,directories(i),files,f);
-                end
-            end
-            cd(f,'..');
-        end
-    end
-    set(handles.textBusy,'String','Not Busy');
-    guidata(hObject, handles);
-    drawnow();
-catch
-    set(handles.textBusy,'String','Failed');
-    guidata(hObject, handles);
-    drawnow();
-end
-
-function getTheFiles(answer3,directories,files,f)
-
-if ~isempty(files)
-    sysLine = ['md "' answer3 '\' directories.name(1:8) '"'];
-    system(sysLine);
-end
-for j = 1:length(files)
-    %                 progressbar(j/length(files))
-    mget(f,files(j).name,[answer3 '\' directories.name(1:8)]);
-    delete(f,files(j).name);
-end
-
-
-
-
-
-
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%Execute Analysis function block
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-function [handles] = corticalAnalysis(handles,hObject)
+function corticalAnalysis(hTimer,eventData,handles,hObject)
     try
             set(handles.textBusy,'String','Busy');
             guidata(hObject, handles);
@@ -3651,8 +3366,8 @@ function [handles] = corticalAnalysis(handles,hObject)
                 [handles.outCortical,handles.outHeaderCortical] = scancoParameterCalculatorCortical(handles.img,handles.bwContour,handles.info,handles.threshold,get(handles.togglebuttonRobustThickness,'Value'));
             end
             [twoDHeader twoDData] = twoDAnalysisSub(handles.img,handles.info,handles.lowerThreshold);
-            if exist([handles.pathstr '\CorticalResults.txt'],'file') ~= 2
-                fid = fopen([handles.pathstr '\CorticalResults.txt'],'a');
+            if exist(fullfile(handles.pathstr,'CorticalResults.txt'),'file') ~= 2
+                fid = fopen(fullfile(handles.pathstr,'CorticalResults.txt'),'a');
                 for i = 1:length(handles.outHeaderCortical)
                     if i == length(handles.outHeaderCortical)
                         fprintf(fid,'%s\t',handles.outHeaderCortical{i});
@@ -3663,7 +3378,7 @@ function [handles] = corticalAnalysis(handles,hObject)
                 end
     %             fprintf(fid,'%s\n','Lower Threshold');
             end
-            fid = fopen([handles.pathstr '\CorticalResults.txt'],'a');
+            fid = fopen(fullfile(handles.pathstr,'CorticalResults.txt'),'a');
             for i = 1:length(handles.outCortical)
                 if ~ischar(handles.outCortical{i})
                     if i == length(handles.outCortical)
@@ -3697,8 +3412,8 @@ function [handles] = cancellousAnalysis(handles,hObject)
         bw(find(handles.img > handles.lowerThreshold)) = 1;
         bw(find(handles.img > handles.upperThreshold)) = 0;
         [handles.outCancellous,handles.outHeaderCancellous] = scancoParameterCalculatorCancellous(bw,handles.bwContour,handles.img,handles.info,get(handles.togglebuttonRobustThickness,'Value'));
-        if exist([handles.pathstr '\CancellousResults.txt'],'file') ~= 2
-            fid = fopen([handles.pathstr '\CancellousResults.txt'],'w');
+        if exist(fullfile(handles.pathstr,'CancellousResults.txt'),'file') ~= 2
+            fid = fopen(fullfile(handles.pathstr,'CancellousResults.txt'),'w');
             for i = 1:length(handles.outCancellous)
                 if i == length(handles.outCancellous)
                     fprintf(fid,'%s\t',handles.outHeaderCancellous{i});
@@ -3711,7 +3426,7 @@ function [handles] = cancellousAnalysis(handles,hObject)
             fclose(fid);
         end
         for i = 1:length(handles.outCancellous)
-            fid = fopen([handles.pathstr '\CancellousResults.txt'],'a');
+            fid = fopen(fullfile(handles.pathstr,'CancellousResults.txt'),'a');
             if i == length(handles.outCancellous)
                 fprintf(fid,'%s\t',num2str(handles.outCancellous{i}));
                 fprintf(fid,'%s\n',num2str(handles.lowerThreshold));
@@ -3744,7 +3459,7 @@ function [handles] = fractureCallusVascularity(handles,hObject)
         handles.outCallus{15} = handles.threshold;
         handles.outCallus{16} = handles.radius;
         
-        fid = fopen([handles.pathstr '\CallusResults.txt'],'a');
+        fid = fopen(fullfile(handles.pathstr,'CallusResults.txt'),'a');
         %     if exist([handles.pathstr '\CallusResults.txt']) ~= 2
         for i = 1:length(handles.outCallus)
             if i == length(handles.outCallus)
@@ -3796,9 +3511,9 @@ function [handles] = arterialOlga(handles,hObject)
         hold on;
         plot(shpCalcification,'FaceColor','k','LineStyle','none');
         
-        savefig(gcf,[handles.pathstr '\calcificationImage.fig']);
+        savefig(gcf,fullfile(handles.pathstr,'calcificationImage.fig'));
         
-        fid = fopen([handles.pathstr '\Results.txt'],'w');
+        fid = fopen(fullfile(handles.pathstr,'Results.txt'),'w');
         header = {'Path','Arterial Tissue Volume (mm^3)','Calcification Volume (mm^3)','% Calcified','Lower Threshold','Upper Threshold'};
         for j = 1:length(header)
             if j ~= length(header)
@@ -3884,7 +3599,7 @@ function [handles] = marrowFat(handles,hObject)
         meanVols = mean(vols);
         stdVols = std(vols);
         totVol = sum(vols);
-        fid = fopen([handles.pathstr '\fatVolumeResults.txt'],'a');
+        fid = fopen(fullfile(handles.pathstr,'fatVolumeResults.txt'),'a');
         
         fprintf(fid,'%s\t','File Path');
         fprintf(fid,'%s\t','Threshold');
@@ -3909,24 +3624,25 @@ function [handles] = marrowFat(handles,hObject)
         fprintf(fid,'%s\n',num2str( totVol / (length(find(handles.bwContour)) * handles.info.SliceThickness^3)));
         fclose(fid);
         
-        fid = fopen([handles.pathstr '\fatVolumeIndividual.txt'],'w');
+        fid = fopen(fullfile(handles.pathstr,'fatVolumeIndividual.txt'),'w');
         for i = 1:length(vols)
             fprintf(fid,'%s\t',num2str(vols(i)));
         end
         fclose(fid);
         
-        fid = fopen([handles.pathstr '\sphericityIndividual.txt'],'w');
+        fid = fopen(fullfile(handles.pathstr,'sphericityIndividual.txt'),'w');
         for i = 1:length(sphericity)
             fprintf(fid,'%s\t',num2str(sphericity(i)));
         end
         fclose(fid);
         
-        sysLine = ['md "' handles.pathstr '\overlay images"'];
-        system(sysLine);
-        
+        mkdir(fullfile(handles.pathstr,'overlay images'));
+
         [a b c] = size(handles.blended);
         for i = 1:c
-            imwrite(handles.blended(:,:,i),[handles.pathstr '\overlay images\Image' num2str(i) '.tif']);
+            pathTemp = fullfile(handles.pathstr,'overlay images');
+            fName = ['Image' num2str(i) '.tif'];
+            imwrite(handles.blended(:,:,i),fullfile(pathTemp,fName));
         end
         
         StackSlider(handles.blended);
@@ -3970,11 +3686,11 @@ function [handles] = tangIVDPMA(handles,hObject)
             shp = shpFromBW(handles.bwNP,3);
             plot(shp,'FaceColor','r','LineStyle','none');
             camlight();
-            saveas(gcf,[handles.pathstr '\Disc.fig']);
+            saveas(gcf,fullfile(handles.pathstr,'Disc.fig'));
             close all;
         end
         
-        fid = fopen([handles.pathstr '\TangIVDPMAResults.txt'],'a');
+        fid = fopen(fullfile(handles.pathstr,'TangIVDPMAResults.txt'),'a');
         fprintf(fid,'%s\t','Date Analysis Performed');
         fprintf(fid,'%s\t','DICOM Path');
         fprintf(fid,'%s\t','Total Volume (mm^3)');
@@ -4063,12 +3779,12 @@ function [handles] = tendonFootprint(handles,hObject)
             end
         end
         
-        stlwrite([handles.pathstr '\ColorBinary.stl'],objFV,'mode','binary','facecolor',faceColor);
-        stlwrite([handles.pathstr '\Ascii.stl'],objFV,'mode','ascii');
-        stlwrite([handles.pathstr '\Volume.stl'],fv,'mode','ascii');
+        stlwrite(fullfile(handles.pathstr,'ColorBinary.stl'),objFV,'mode','binary','facecolor',faceColor);
+        stlwrite(fullfile(handles.pathstr,'Ascii.stl'),objFV,'mode','ascii');
+        stlwrite(fullfile(handles.pathstr,'Volume.stl'),fv,'mode','ascii');
         
         header = {'DICOM path', 'Area of object contained in volume (mm)'};
-        fid = fopen([handles.pathstr '\TendonSurfaceArea.txt'],'w');
+        fid = fopen(fullfile(handles.pathstr,'TendonSurfaceArea.txt'),'w');
         fprintf(fid,'%s\t',header{1});
         fprintf(fid,'%s\n',header{2});
         
@@ -4088,8 +3804,10 @@ function [handles] = makeGIF(handles,hObject)
         guidata(hObject, handles);
         drawnow();
         [a b c] = size(handles.img);
-        filename = [handles.pathstr '\stack.gif'];
+        filename = fullfile(handles.pathstr,'stack.gif');
         for i = 1:c
+            set(handles.textPercentLoaded,'String',num2str(i/c));
+            drawnow();
             if i == 1
                 imwrite(im2uint8(imadjust(handles.img(:,:,i),[double(handles.lOut);double(handles.hOut)])),filename,'LoopCount',Inf,'DelayTime',0.01);
             else
@@ -4256,11 +3974,11 @@ function [handles] = tangIVDPMANotocord(handles,hObject)
             shp = shpFromBW(resize3DMatrixBW(handles.bwNC,0.5),3);
             plot(shp,'FaceColor','c','LineStyle','none');
             camlight();
-            saveas(gcf,[handles.pathstr '\Disc.fig']);
+            saveas(gcf,fullfile(handles.pathstr,'Disc.fig'));
             %         close all;
         end
         
-        fid = fopen([handles.pathstr '\TangIVDPMANotochordResults.txt'],'a');
+        fid = fopen(fullfile(handles.pathstr,'TangIVDPMANotochordResults.txt'),'a');
         fprintf(fid,'%s\t','Date Analysis Performed');
         fprintf(fid,'%s\t','DICOM Path');
         fprintf(fid,'%s\t','Total Volume (mm^3)');
@@ -4316,16 +4034,6 @@ function [handles] = needlePuncture(handles,hObject)
         
         shp1 = shpFromBW(handles.bwBone,3);
         shp2 = shpFromBW(handles.bwNeedleHole,3);
-        
-        %     FV1.faces = shp1.boundaryFacets;
-        %     FV1.vertices = shp1.Points;
-        
-        %     FV2.faces = shp2.boundaryFacets;
-        %     FV2.vertices = shp2.Points;
-        
-        %     FV1 = smoothpatch(FV1,1,4,1,0.4);
-        %     FV2 = smoothpatch(FV2,1,4,1,0.4);
-        
         
         figure;
         plot(shp1,'FaceColor','w','LineStyle','none','FaceAlpha',0.4);
@@ -4427,7 +4135,7 @@ function [handles] = registerVolumes(handles,hObject)
 function [handles] = twoDAnalysis(handles,hObject)
     try
         set(handles.textBusy,'String','Busy');
-        fid = fopen([handles.pathstr '\2DResults.txt'],'a');
+        fid = fopen(fullfile(handles.pathstr,'2DResults.txt'),'a');
         fprintf(fid,'%s\t','Date Analyzed');
         fprintf(fid,'%s\t','Measurement');
         
@@ -4453,6 +4161,8 @@ function [handles] = twoDAnalysis(handles,hObject)
         
         [a b c] = size(handles.bwContour);
         for i = 1:c
+            set(handles.textPercentLoaded,'String',num2str(i/c));
+            drawnow();
             area(i) = bwarea(handles.bwContour(:,:,i)) * handles.info.SliceThickness^2;
             tmp = handles.imgDensity(:,:,i);
             meanIntens(i) = mean(reshape(tmp(handles.bwContour(:,:,i)),[length(find(handles.bwContour(:,:,i))) 1]));
@@ -4460,9 +4170,6 @@ function [handles] = twoDAnalysis(handles,hObject)
             minIntens(i) = min(double(reshape(tmp(handles.bwContour(:,:,i)),[length(find(handles.bwContour(:,:,i))) 1])));
             maxIntens(i) = max(double(reshape(tmp(handles.bwContour(:,:,i)),[length(find(handles.bwContour(:,:,i))) 1])));
         end
-        
-        
-        
         
         meanArea = mean(area);
         minArea = min(area);
@@ -4509,7 +4216,7 @@ function [handles] = twoDAnalysis(handles,hObject)
 function [handles] = fractureCallus3PtBendBreak(handles,hObject)
     try
         set(handles.textBusy,'String','Busy');
-        fid = fopen([handles.pathstr '\FractureCallus3PtBendBreakResults.txt'],'a');
+        fid = fopen(fullfile(handles.pathstr,'FractureCallus3PtBendBreakResults.txt'),'a');
         fprintf(fid,'%s\t','Date Analyzed');
         fprintf(fid,'%s\t','Measurement');
         fprintf(fid,'%s\t','Number of Slices');
@@ -4572,8 +4279,8 @@ function [handles] = guilakKneeSurface(handles,hObject)
         guidata(hObject, handles);
         drawnow();
         [handles.outCortical,handles.outHeaderCortical] = scancoParameterCalculatorCortical(handles.img,handles.bwContour,handles.info,handles.threshold,get(handles.togglebuttonRobustThickness,'Value'));
-        if exist([handles.pathstr '\CorticalResults.txt'],'file') ~= 2
-            fid = fopen([handles.pathstr '\CorticalResults.txt'],'a');
+        if exist(fullfile(handles.pathstr,'CorticalResults.txt'),'file') ~= 2
+            fid = fopen(fullfile(handles.pathstr,'CorticalResults.txt'),'a');
             for i = 1:length(handles.outHeaderCortical)
                 if i == length(handles.outHeaderCortical)
                     fprintf(fid,'%s\n',handles.outHeaderCortical{i});
@@ -4583,7 +4290,7 @@ function [handles] = guilakKneeSurface(handles,hObject)
             end
 %             fprintf(fid,'%s\n','Lower Threshold');
         end
-        fid = fopen([handles.pathstr '\CorticalResults.txt'],'a');
+        fid = fopen(fullfile(handles.pathstr,'CorticalResults.txt'),'a');
         for i = 1:length(handles.outCortical)
             if ~ischar(handles.outCortical{i})
                 if i == length(handles.outCortical)
@@ -4611,7 +4318,7 @@ function handles = loadTifStack(handles,hObject)
         set(handles.textBusy,'String','Busy');
         drawnow();
         pathstr = uigetdir(pwd,'Please select the folder containing your stack of TIF (or TIFF) images');
-        files = dir([pathstr '\*.tif*']);
+        files = dir(fullfile(pathstr,'*.tif*'));
         [file pth] = uigetfile('*.*', 'Select a DICOM file to use as a template or cancel to continue with dummy metadata');
         if file ~= 0
             info = dicominfo(fullfile(pth,file));
@@ -4708,29 +4415,462 @@ function [handles] = skeletonizationAnalysis(handles,hObject)
         set(handles.textBusy,'String','Busy');
         drawnow();
         
+        %generates uncorrected skeleton
         handles.bwSkeleton = Skeleton3D(handles.bwContour);
         [handles.A handles.node handles.link] = Skel2Graph3D(handles.bwSkeleton,str2num(get(handles.editRadius,'String')));
         [w l h] = size(handles.bwSkeleton);
         handles.bwSkeleton = Graph2Skel3D(handles.node,handles.link,w,l,h);
-        shp = shpFromBW(handles.bwContour,3);
-        [x y z] = ind2sub(size(handles.bwSkeleton),find(handles.bwSkeleton));
-        figure;
-        plot(shp,'LineStyle','none','FaceAlpha',0.3,'FaceColor','r');
-        axis([min(x) max(x) min(y) max(y) min(z) max(z)]);
-        D = bwdist(~handles.bwContour);
-        [x1 y1 z1] = sphere;%include sort by size and sphere consumption thing from calculateThickness
+        
+        hfig = figure;
+        set(hfig,'Visible','off')
+        shp = shpFromBW(handles.bwContour,2);
+        plot(shp,'FaceColor','w','FaceAlpha',0.3,'LineStyle','none');
+        camlight();
         hold on;
-        for i = 1:length(x)
-            rad = D(x(i),y(i),z(i));
-            surf(x1*rad + x(i),y1*rad + y(i),z1*rad + z(i),'LineStyle','none','FaceColor','b');
+        handles.bwDist = bwdist(~handles.bwContour);
+        handles.bwDist(~handles.bwSkeleton) = 0;
+        handles = reduceDistanceMap(handles,hObject);
+        [r c v] = ind2sub(size(handles.bwDist),find(handles.bwDist));
+        xyzUlt = [r c v];
+        for i = 1:length(xyzUlt)
+            rads(i) = handles.bwDist(xyzUlt(i,1),xyzUlt(i,2),xyzUlt(i,3));%find xyz coords of the local maxima
+        end
+        [rads I] = sort(rads,'ascend');
+        xyzUlt = xyzUlt(I,:);
+        [x y z] = sphere();
+        Y = discretize(rads,64);
+        cmap = jet(64);
+        for i = 1:length(rads)
+            set(handles.textPercentLoaded,'String',num2str(i/length(rads)));
+            drawnow();
+            surf((x*rads(i)+xyzUlt(i,1)),(y*rads(i)+xyzUlt(i,2)),(z*rads(i)+xyzUlt(i,3)),'LineStyle','none','FaceColor',cmap(Y(i),:));
             axis tight;
             drawnow();
         end
-            
+        hold off;
+        saveas(hfig,fullfile(handles.pathstr,'SkeletonizedFigure.fig'));
+        
+        for i = 1:length(handles.link)
+            clear px py pz;
+            out(i).nodes = [handles.link(i).n1,handles.link(i).n2];
+            out(i).nodeLocs(1,:) = [handles.node(handles.link(i).n1).comx,handles.node(handles.link(i).n1).comy,handles.node(handles.link(i).n1).comz];
+            out(i).nodeLocs(2,:) = [handles.node(handles.link(i).n2).comx,handles.node(handles.link(i).n2).comy,handles.node(handles.link(i).n2).comz];
+            for k = 1:length(handles.link(i).point)
+                [px(k) py(k) pz(k)] = ind2sub(size(handles.bwSkeleton),handles.link(i).point(k));
+            end
+            out(i).points = [px' py' pz'];
+            for k = 1:length(out(i).points(:,1))
+                out(i).rads(k) = double(handles.bwDist(out(i).points(k,1),out(i).points(k,2),out(i).points(k,3)));
+            end
+            out(i).rads = out(i).rads(find(out(i).rads));
+            %convert to physical units
+            out(i).nodeLocs = out(i).nodeLocs .* handles.info.SliceThickness;
+            px = px  .* handles.info.SliceThickness;
+            py = py  .* handles.info.SliceThickness;
+            pz = pz  .* handles.info.SliceThickness;
+            out(i).points = out(i).points  .* handles.info.SliceThickness;
+            out(i).rads = out(i).rads  .* handles.info.SliceThickness;
+%           %calculate length of snake
+            for k = 1:length(px)
+                if k == 1
+                    out(i).length = 0;
+                else
+                    out(i).length = out(i).length + sqrt((px(k) - px(k-1))^2 + (py(k) - py(k-1))^2 + (pz(k) - pz(k-1))^2);
+                end
+            end
+        end
+        
+        
+
+        outHeader = {'File','Date','Nodes','Node Locations','Link Length','Mean Link Radius','STD Link Radius','Link Points'};
+        fid = fopen(fullfile(handles.pathstr,'SkeletonizationResults.txt'),'w');
+        for i = 1:length(outHeader)
+            if i ~= length(outHeader)
+                fprintf(fid,'%s\t',outHeader{i});
+            else
+                fprintf(fid,'%s\n',outHeader{i});
+            end
+        end
+        
+        for i = 1:length(out)
+            if ~isempty(out(i).rads)
+                fprintf(fid,'%s\t',handles.pathstr);
+                fprintf(fid,'%s\t',datestr(now));
+                fprintf(fid,'%s\t',[num2str(out(i).nodes(1)) ',' num2str(out(i).nodes(2))]);
+                for k = 1:length(out(i).nodeLocs(:,1))
+                    if k ~= length(out(i).nodeLocs(:,1))
+                        fprintf(fid,'%s',[num2str(out(i).nodeLocs(k,:)) ';']);
+                    else
+                        fprintf(fid,'%s\t',num2str(out(i).nodeLocs(k,:)));
+                    end
+                end
+                fprintf(fid,'%s\t',num2str(out(i).length));
+                fprintf(fid,'%s\t',num2str(mean(out(i).rads)));
+                fprintf(fid,'%s\t',num2str(std(out(i).rads)));
+                for k = 1:length(out(i).points)
+                    if k ~= length(out(i).points)
+                        fprintf(fid,'%s',[num2str(out(i).points(k,:)) ';']);
+                    else
+                        fprintf(fid,'%s\n',num2str(out(i).points(k,:)));
+                    end
+                end
+                
+            end
+        end
+        fclose(fid);    
+
+
+%         %corrects skeleton to join sections within a user-specified
+%         %distance
+%         handles.bwDist = bwdist(handles.bwContour);
+%         handles.bwDist(handles.bwContour) = max(max(max(handles.bwDist)));
+        
         
         set(handles.textBusy,'String','Not Busy');
     catch
         set(handles.textBusy,'String','Failed');
     end
     
+function [handles] = distanceMap(handles,hObject)
+    try
+        set(handles.textBusy,'String','Busy');
+        drawnow();
+        
+        handles.bwDist = bwdist(handles.bwContour);
+        handles.imgOrig = handles.img;
+        handles.img = uint16(handles.bwDist);
+        
+        set(handles.textBusy,'String','Not Busy');
+    catch
+        set(handles.textBusy,'String','Failed');
+    end
+        
+function writeToTiff(handles,hObject)
+    try
+        set(handles.textBusy,'String','Busy');
+        drawnow();
+        mkdir(fullfile(handles.pathstr,[handles.DICOMPrefix 'TIF']));
+        zers = '000000';
+        [a b c] = size(handles.img);
+        for i = 1:c
+            slice = num2str(i);
+            len = length(slice);
+            set(handles.textPercentLoaded,'String',num2str(i/c));
+            drawnow();
+            pathTmp = fullfile(handles.pathstr,[handles.DICOMPrefix 'TIF']);
+            fName = [handles.DICOMPrefix '-' zers(1:end-length(num2str(i))) num2str(i)  '.tif'];
+            imwrite(handles.img(:,:,i),fullfile(pathTmp,fName));
+        end
+        set(handles.textBusy,'String','Not Busy');
+    catch
+        set(handles.textBusy,'String','Failed');
+    end
     
+
+function [handles] = reduceDistanceMap(handles,hObject)
+    try
+        set(handles.textBusy,'String','Busy');
+        drawnow();
+        maxRad = max(max(max(handles.bwDist)));
+        
+        %pad array to account for radius
+        handles.bwDist = padarray(handles.bwDist,[double(2*ceil(maxRad)+2) double(2*ceil(maxRad)+2) double(2*ceil(maxRad)+2)]);
+        
+        initLen = length(find(handles.bwDist));
+        [x y z] = ind2sub(size(handles.bwDist),find(handles.bwDist));
+        [aa bb cc] = size(handles.bwDist);
+        handles.bwDistReshaped = reshape(handles.bwDist,[aa*bb*cc,1]);
+        [handles.bwDistSorted I]= sort(handles.bwDistReshaped,'descend');
+        [handles.bwDistSorted] = handles.bwDistSorted(find(handles.bwDistSorted));
+        [x2 y2 z2] = ind2sub(size(handles.bwDist),I(1:length(handles.bwDistSorted)));
+       
+
+        for i = 1:length(x2)
+            if mod(i,50) == 0 || i == length(x2)
+                set(handles.textPercentLoaded,'String',num2str(i/length(x2)));
+                drawnow(); 
+            end
+            if handles.bwDist(x2(i),y2(i),z2(i)) > 0
+
+                radToTest = handles.bwDist(x2(i),y2(i),z2(i));
+
+                bw3 = false(size(handles.bwDist));
+%                 bw3(x2(i),y2(i),z2(i)) = 1;
+%                  bw3 = imdilate(bw3,true([2*ceil(maxRad)+1,2*ceil(maxRad)+1,2*ceil(maxRad)+1]));
+                bw3(((x2(i)-(2*ceil(maxRad)+1)):(x2(i)+(2*ceil(maxRad)+1))),...
+                    ((y2(i)-(2*ceil(maxRad)+1)):(y2(i)+(2*ceil(maxRad)+1))),...
+                    ((z2(i)-(2*ceil(maxRad)+1)):(z2(i)+(2*ceil(maxRad)+1)))) = 1;
+                [a1 b1 c1] = ind2sub(size(bw3),find(bw3));
+
+                radsTesting = handles.bwDist(bw3);
+
+                ds = sqrt((a1-x2(i)).^2 + (b1-y2(i)).^2 + (c1-z2(i)).^2);%location of cube - location of radius
+                rirj = radToTest + radsTesting;
+
+                inds = rirj >= ds;% find spheres that intersect
+                [thisMax I] = max(radsTesting(inds));
+                inds = [a1(inds),b1(inds),c1(inds)];
+                if radToTest >= thisMax
+                    inds2 = inds == [x2(i),y2(i),z2(i)];
+                    for j = 1:length(inds2)
+                        if inds2(j,1) == 1 && inds2(j,2) == 1 && inds2(j,3) == 1
+                            inds(j,:) = [];
+                        end
+                    end
+                else
+                    inds(I,:) = [];
+                end
+                for j = 1:length(inds)
+                    handles.bwDist(inds(j,1),inds(j,2),inds(j,3)) = 0;
+                end
+
+            end
+
+        end
+        
+        %remove padding
+        handles.bwDist = handles.bwDist((2*ceil(maxRad)+2):end-(2*ceil(maxRad)+2),...
+            (2*ceil(maxRad)+2):end-(2*ceil(maxRad)+2),...
+            (2*ceil(maxRad)+2):end-(2*ceil(maxRad)+2));
+ 
+        set(handles.textBusy,'String','Not Busy');
+    catch
+        set(handles.textBusy,'String','Failed');
+    end
+
+
+% --- Executes on selection change in popupmenuMaskComponents.
+function popupmenuMaskComponents_Callback(hObject, eventdata, handles)
+% hObject    handle to popupmenuMaskComponents (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    structure with handles and user data (see GUIDATA)
+
+% Hints: contents = cellstr(get(hObject,'String')) returns popupmenuMaskComponents contents as cell array
+%        contents{get(hObject,'Value')} returns selected item from popupmenuMaskComponents
+
+
+% --- Executes during object creation, after setting all properties.
+function popupmenuMaskComponents_CreateFcn(hObject, eventdata, handles)
+% hObject    handle to popupmenuMaskComponents (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    empty - handles not created until after all CreateFcns called
+
+% Hint: popupmenu controls usually have a white background on Windows.
+%       See ISPC and COMPUTER.
+if ispc && isequal(get(hObject,'BackgroundColor'), get(0,'defaultUicontrolBackgroundColor'))
+    set(hObject,'BackgroundColor','white');
+end
+
+
+% --- Executes on button press in pushbuttonPopulateMaskComponents.
+function pushbuttonPopulateMaskComponents_Callback(hObject, eventdata, handles)
+% hObject    handle to pushbuttonPopulateMaskComponents (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    structure with handles and user data (see GUIDATA)
+try
+    set(handles.textBusy,'String','Busy');
+    handles.cc = bwconncomp(handles.bwContour);
+    for i = 1:length(handles.cc.PixelIdxList)
+        connCompInd{i} = num2str(i);
+        set(handles.textPercentLoaded,'String',num2str(i/length(handles.cc.PixelIdxList)));
+        drawnow(); 
+    end
+    set(handles.popupmenuMaskComponents,'String',connCompInd);
+    set(handles.textBusy,'String','Not Busy');
+    guidata(hObject, handles);
+catch
+    set(handles.textBusy,'String','Failed');
+end
+
+function writeCurrentImageStackToDICOM(handles,hObject)
+
+try
+    set(handles.textBusy,'String','Busy');
+    guidata(hObject, handles);
+    drawnow();
+    [a b c] = size(handles.img);
+    
+    zers = '00000';
+    handles.info.Rows = a;
+    handles.info.Columns = b;
+    handles.info.InstitutionName = 'Washington University in St. Louis';
+    handles.info.SliceThickness = handles.info.SliceThickness / handles.imgScale;
+    handles.info.Height = a;
+    handles.info.Width = b;
+    handles.info.PixelSpacing = [handles.info.SliceThickness;handles.info.SliceThickness];
+    handles.info.PixelSpacing = handles.info.PixelSpacing .* handles.imgScale;
+    handles.info.StudyDescription = handles.DICOMPrefix;
+    
+    
+    %for ZEISS scans
+    if ~isempty(strfind(handles.info.Manufacturer,'Zeiss'))
+        mkdir(fullfile(handles.pathstr, handles.DICOMPrefix));
+        tmpDir = fullfile(handles.pathstr,handles.DICOMPrefix);
+        tmp = dicominfo(fullfile(pwd,'ZeissDICOMTemplate.dcm'));%read info from a known working Zeiss DICOM
+        tmp2 = tmp;
+        for i = 1:c
+            tmp2.FileName = [handles.DICOMPrefix zers(1:end - length(num2str(i))) num2str(i) '.dcm'];
+            tmp2.Rows = handles.info.Rows;
+            tmp2.Columns = handles.info.Columns;
+            tmp2.InstitutionName = handles.info.InstitutionName;
+            tmp2.SliceThickness = handles.info.SliceThickness;
+            tmp2.Height = handles.info.Height;
+            tmp2.Width = handles.info.Width;
+            tmp2.PixelSpacing = handles.info.PixelSpacing;
+            tmp2.StudyDescription = handles.info.StudyDescription;
+            tmp2.KVP = handles.info.KVP;
+            zers2 = '000000';
+            slice = num2str(i);
+            len = length(slice);
+            tmp2.MediaStorageSOPInstanceUID = ['1.2.826.0.1.3680043.8.435.3015486693.35541.' zers(1:end-len) num2str(i)];
+            tmp2.SOPInstanceUID = tmp2.MediaStorageSOPInstanceUID;
+            tmp2.PatientName.FamilyName = handles.DICOMPrefix;
+            tmp2.ImagePositionPatient(3) = tmp2.ImagePositionPatient(3) + tmp2.SliceThickness;
+            set(handles.textPercentLoaded,'String',num2str(i/c));
+            drawnow(); 
+            fName = [handles.DICOMPrefix '-' zers(1:end-length(num2str(i))) num2str(i)  '.dcm'];
+            dicomwrite(handles.img(:,:,i),fullfile(tmpDir,fName),tmp2);
+        end
+    elseif ~isempty(strfind(handles.info.Manufacturer,'SCANCO'))
+        mkdir(fullfile(handles.pathstr,handles.DICOMPrefix));
+        tmpDir = fullfile(handles.pathstr,handles.DICOMPrefix);
+        %sort out info struct for writing; dicomwrite won't write private fields
+        tmp = handles.info;
+        if isfield(tmp,'Private_0029_1000')%identifies as Scanco original DICOM file
+            handles.info.ReferringPhysicianName.FamilyName = num2str(tmp.Private_0029_1004);%will be slope for density conversion
+            handles.info.ReferringPhysicianName.GivenName = num2str(tmp.Private_0029_1005);%intercept
+            handles.info.ReferringPhysicianName.MiddleName = num2str(tmp.Private_0029_1000);%scaling
+            handles.info.ReferringPhysicianName.NamePrefix = num2str(tmp.Private_0029_1006);%u of water
+        end
+        for i = 1:c
+            if i == 1
+                info = handles.info;
+                info.FileName = fullfile(handles.pathstr,[handles.DICOMPrefix '-' zers(1:end-length(num2str(i))) num2str(i) '.dcm']);
+            else
+                info.SliceLocation = info.SliceLocation + info.SliceThickness;
+                info.ImagePositionPatient = info.ImagePositionPatient + info.SliceThickness;
+                info.FileName = fullfile(handles.pathstr,[handles.DICOMPrefix zers(1:end-length(num2str(i))) num2str(i)  '.dcm']);
+                %         info.MediaStorageSOPInstanceUID = num2str(str2num(info.MediaStorageSOPInstanceUID) + 1);
+                %         info.SOPInstanceUID = num2str(str2num(info.SOPInstanceUID) + 1);
+                
+            end
+            set(handles.textPercentLoaded,'String',num2str(i/c));
+            drawnow(); 
+            fName = [handles.DICOMPrefix '-' zers(1:end-length(num2str(i))) num2str(i)  '.dcm'];
+            dicomwrite(handles.img(:,:,i),fullfile(tmpDir,fName),info);
+        end
+    else
+        mkdir(fullfile(handles.pathstr,handles.DICOMPrefix))
+        tmpDir = fullfile(handles.pathstr,handles.DICOMPrefix);
+        %sort out info struct for writing; dicomwrite won't write private fields
+        tmp = handles.info;
+        for i = 1:c
+            if i == 1
+                info = handles.info;
+                info.SliceLocation = 1;
+                info.FileName = fullfile(handles.pathstr,[handles.DICOMPrefix '-' zers(1:end-length(num2str(i))) num2str(i) '.dcm']);
+            else
+                info.SliceLocation = info.SliceLocation + info.SliceThickness;
+                info.ImagePositionPatient = info.ImagePositionPatient + info.SliceThickness;
+                info.FileName = fullfile(handles.pathstr,[handles.DICOMPrefix zers(1:end-length(num2str(i))) num2str(i)  '.dcm']);
+                %         info.MediaStorageSOPInstanceUID = num2str(str2num(info.MediaStorageSOPInstanceUID) + 1);
+                %         info.SOPInstanceUID = num2str(str2num(info.SOPInstanceUID) + 1);
+                
+            end
+            set(handles.textPercentLoaded,'String',num2str(i/c));
+            drawnow(); 
+            fName = [handles.DICOMPrefix '-' zers(1:end-length(num2str(i))) num2str(i)  '.dcm'];
+            dicomwrite(handles.img(:,:,i),fullfile(tmpDir,fName),info);
+        end
+        
+    end
+    set(handles.textBusy,'String','Not Busy');
+    guidata(hObject, handles);
+    drawnow();
+catch
+    set(handles.textBusy,'String','Failed');
+    guidata(hObject, handles);
+    drawnow();
+end
+
+
+function saveCurrentImage(handles,hObject)
+
+try
+    set(handles.textBusy,'String','Busy');
+    guidata(hObject, handles);
+    drawnow();
+    outFile = fullfile(handles.pathstr,[get(handles.editDICOMPrefix,'String') '.tif']);
+    imwrite(getimage(handles.axesIMG),outFile);
+    set(handles.textBusy,'String','Not Busy');
+    guidata(hObject, handles);
+    drawnow();
+catch
+    set(handles.textBusy,'String','Failed');
+    guidata(hObject, handles);
+    drawnow();
+end
+
+function generateHistogram(handles,hObject)
+
+    try
+        set(handles.textBusy,'String','Busy');
+        guidata(hObject, handles);
+        drawnow();
+        [a b c] = size(handles.img);
+        img = reshape(handles.img,[1,a*b*c]);
+        figure;
+        histogram(img(find(img > 0)),320);
+        set(handles.textBusy,'String','Not Busy');
+        guidata(hObject, handles);
+        drawnow();
+    catch
+        set(handles.textBusy,'String','Failed');
+        guidata(hObject, handles);
+        drawnow();
+    end
+
+
+% --- Executes on button press in pushbuttonSetMaskByClicking.
+function pushbuttonSetMaskByClicking_Callback(hObject, eventdata, handles)
+% hObject    handle to pushbuttonSetMaskByClicking (see GCBO)
+% eventdata  reserved - to be defined in a future version of MATLAB
+% handles    structure with handles and user data (see GUIDATA)
+try
+        set(handles.textBusy,'String','Busy');
+        guidata(hObject, handles);
+        drawnow();
+        [x y] = getpts(handles.axesIMG);
+        z(1:length(x),1) = handles.slice;
+        pt = round([y x z]);%points to use to select mask component
+        cc = bwconncomp(handles.bwContour);
+        removeFlag = zeros(length(cc.PixelIdxList),length(pt(:,1)));
+        for i = 1:length(cc.PixelIdxList)
+            [idxx idxy idxz] = ind2sub(size(handles.bwContour),cc.PixelIdxList{i});
+            idx = [idxx idxy idxz];
+            for k = 1:length(pt(:,1))
+               if length(find(ismember(pt(k,:),idx,'rows'))) == 0
+                   removeFlag(i,k) = 1;
+               end
+            end
+            set(handles.textPercentLoaded,'String',num2str(i/length(cc.PixelIdxList)));
+            drawnow(); 
+        end
+        
+        for i = 1:length(removeFlag)
+            if sum(removeFlag(i,:)) == length(removeFlag(i,:))
+                handles.bwContour(cc.PixelIdxList{i}) = 0;
+            end
+        end
+        
+        updateImage(hObject,eventdata,handles);
+        
+        set(handles.textBusy,'String','Not Busy');
+        guidata(hObject, handles);
+        drawnow();
+        
+catch
+    set(handles.textBusy,'String','Failed');
+    guidata(hObject, handles);
+    drawnow();
+end
